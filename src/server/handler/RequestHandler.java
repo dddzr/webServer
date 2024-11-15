@@ -2,15 +2,20 @@ package server.handler;
 
 import java.io.*;
 import java.nio.file.*;
+
+import server.security.AuthenticationManager;
+
 import java.net.HttpURLConnection;
 import java.net.Socket;
 import java.net.URL;
 
 public class RequestHandler implements Runnable {
     private Socket clientSocket;
+    private AuthenticationManager authenticationManager;
 
     public RequestHandler(Socket socket) {
         this.clientSocket = socket;
+        this.authenticationManager = new AuthenticationManager();
     }
 
     @Override
@@ -18,9 +23,10 @@ public class RequestHandler implements Runnable {
         try {
             InputStream inputStream = clientSocket.getInputStream();
             BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
-            String requestLine = reader.readLine(); // Read the HTTP request line
-            System.out.println("Request: " + requestLine);
-            /*
+            String requestLine = reader.readLine(); // Read Header
+
+            /* 
+                the HTTP request 
                 요청 예시
                 - 브라우저 에서
                 http://localhost:8080/index.html
@@ -29,9 +35,25 @@ public class RequestHandler implements Runnable {
                 GET /index.html HTTP/1.1
                 Host: localhost:8080
                 Connection: keep-alive
-             */
 
-            // Parse the requested file (assuming the request line is of the form "GET /index.html HTTP/1.1")
+                - 인증 포함
+                GET /protected/resource HTTP/1.1
+                Host: example.com
+                Authorization: Bearer abcdefgh1234567890 (JWT토큰 이용) 또는 Basic YWRtaW46cGFzc3dvcmQ=
+                Connection: keep-alive
+
+             */
+            System.out.println("Request: " + requestLine);
+
+            // 인증 체크: 요청이 API나 보호된 리소스에 대한 것이라면 인증을 확인
+            // if (isProtectedResource(requestLine)) {
+                String authHeader = getAuthorizationHeader(reader);
+                if (!authenticationManager.authenticate(authHeader)) {
+                    authenticationManager.sendUnauthorizedResponse(clientSocket); // 인증 실패 응답
+                    return; // 인증 실패 시 요청 처리 중단
+                }
+            // }
+            
             String[] requestParts = requestLine.split(" ");
             String fileRequested = requestParts[1];
 
@@ -49,15 +71,32 @@ public class RequestHandler implements Runnable {
             } else if (fileRequested.startsWith("/api/")) {
                 // For API requests, forward the request to WAS
                 String apiResponse = forwardToWAS(fileRequested);
-                sendResponse(writer, apiResponse, "application/json"); // Assume API returns JSON
+                sendResponse(writer, apiResponse, "application/json");
             } else {
-                sendNotFoundResponse(writer); // Handle unsupported file types or URLs
+                sendNotFoundResponse(writer);
             }
 
             clientSocket.close(); // Close the client connection after sending the response
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    // Check if the requested resource requires authentication
+    private boolean isProtectedResource(String requestLine) {
+        return requestLine.contains("/api/") || requestLine.contains("/admin");
+    }
+
+    // Extract the Authorization header from the request
+    private String getAuthorizationHeader(BufferedReader reader) throws IOException {
+        String line;
+        while ((line = reader.readLine()) != null) {
+            // "Authorization: Bearer <token>" 형식이라면
+            if (line.startsWith("Authorization:")) {
+                return line.split(" ")[1]; // 두 번째 부분인 "Bearer"나 토큰을 반환
+            }
+        }
+        return null; // No Authorization header found
     }
 
     // Serve static file from webroot
@@ -91,7 +130,8 @@ public class RequestHandler implements Runnable {
         }
     }
 
-    // Forward request to WAS (e.g., a REST API)
+    // Forward request to WAS
+    // 리버스 프록시 역할
     private String forwardToWAS(String fileRequested) {
         StringBuilder response = new StringBuilder();
         try {

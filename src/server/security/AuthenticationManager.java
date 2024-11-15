@@ -8,22 +8,14 @@ import java.net.Socket;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 
 public class AuthenticationManager {
-    /*테스트 코드 */
-    // private static final String username = "admin";
-    // private static final String passwordHash = "5f4dcc3b5aa765d61d8327deb882cf99";
+    private Map<String, String> userCredentials = new HashMap<>(); // 유저명과 해시된 비밀번호를 저장
 
-    private String username;
-    private String passwordHash;
-
-    public AuthenticationManager() {
-        loadCredentials();
-    }
-
-    // config/users.properties에서 사용자 자격 증명을 불러오는 메소드
-    private void loadCredentials() {
+    public void loadCredentials() {
         Properties properties = new Properties();
         try (InputStream input = getClass().getClassLoader().getResourceAsStream("config/users.properties")) {
             if (input == null) {
@@ -31,34 +23,50 @@ public class AuthenticationManager {
                 return;
             }
             properties.load(input);
-            this.username = properties.getProperty("username");
-            this.passwordHash = properties.getProperty("passwordHash");
+
+            // 파일에서 유저명과 비밀번호 해시를 읽어와 Map에 저장
+            for (String username : properties.stringPropertyNames()) {
+                String passwordHash = properties.getProperty(username);
+                userCredentials.put(username, passwordHash);
+            }
+
         } catch (IOException e) {
             e.printStackTrace();
-            
         }
     }
-
+    
     public boolean authenticate(String authHeader) {
         if (authHeader == null || !authHeader.startsWith("Basic ")) {
             return false;
         }
-
+    
         // Base64로 인코딩된 자격 증명 디코딩
         String encodedCredentials = authHeader.split(" ")[1];
         String decoded = new String(Base64.getDecoder().decode(encodedCredentials));
         String[] credentials = decoded.split(":");
-
+    
         if (credentials.length != 2) {
             return false;  // username과 password가 올바르게 제공되지 않은 경우
         }
-
-        // username과 해시화된 password 비교
+    
+        // username과 password 추출
         String username = credentials[0];
         String password = credentials[1];
-
-        return this.username.equals(username) && this.passwordHash.equals(hashPassword(password));
+    
+        return authenticate(username, password);
     }
+    
+    public boolean authenticate(String username, String password) {
+        // 사용자가 입력한 비밀번호의 해시값을 구함
+        String passwordHash = hashPassword(password);
+    
+        // userCredentials Map에서 해당 유저의 해시된 비밀번호를 가져와 비교
+        String storedPasswordHash = userCredentials.get(username);
+    
+        // 비밀번호가 일치하는지 확인
+        return storedPasswordHash != null && storedPasswordHash.equals(passwordHash);
+    }
+    
     
     // Send Unauthorized response when authentication fails
     public void sendUnauthorizedResponse(Socket clientSocket) throws IOException {

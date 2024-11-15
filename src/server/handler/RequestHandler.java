@@ -45,7 +45,7 @@ public class RequestHandler implements Runnable {
              */
             System.out.println("Request: " + requestLine);
 
-            // 인증 체크: 요청이 API나 보호된 리소스에 대한 것이라면 인증을 확인
+            // 인증 범위: 요청이 API나 보호된 리소스에 대한 건지 확인
             // if (isProtectedResource(requestLine)) {
                 String authHeader = getAuthorizationHeader(reader);
                 if (!authenticationManager.authenticate(authHeader)) {
@@ -53,6 +53,13 @@ public class RequestHandler implements Runnable {
                     return; // 인증 실패 시 요청 처리 중단
                 }
             // }
+
+            // 인증 후 역할 확인 (예: admin 역할 확인 - 필요 시 여러 역할에 대한 권한/ 개인 별 권한으로 config랑 같이 추가 할 것.)
+            String username = authenticationManager.getUsernameFromAuthHeader(authHeader);
+            if (!authenticationManager.hasRole(username, "ADMIN")) {
+                authenticationManager.sendForbiddenResponse(clientSocket); // 권한 없음 응답 (403 Forbidden)
+                return; // 권한 없음 시 요청 처리 중단
+            }
             
             String[] requestParts = requestLine.split(" ");
             String fileRequested = requestParts[1];
@@ -82,7 +89,7 @@ public class RequestHandler implements Runnable {
         }
     }
 
-    // Check if the requested resource requires authentication
+    // 보호되는 리소스인지 확인 (보호 범위 설정)
     private boolean isProtectedResource(String requestLine) {
         return requestLine.contains("/api/") || requestLine.contains("/admin");
     }
@@ -92,8 +99,9 @@ public class RequestHandler implements Runnable {
         String line;
         while ((line = reader.readLine()) != null) {
             // "Authorization: Bearer <token>" 형식이라면
+            System.out.println(line);
             if (line.startsWith("Authorization:")) {
-                return line.split(" ")[1]; // 두 번째 부분인 "Bearer"나 토큰을 반환
+                return line;
             }
         }
         return null; // No Authorization header found

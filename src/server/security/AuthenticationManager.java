@@ -1,5 +1,6 @@
 package server.security;
 
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -14,61 +15,85 @@ import java.util.Properties;
 
 public class AuthenticationManager {
     private Map<String, String> userCredentials = new HashMap<>(); // 유저명과 해시된 비밀번호를 저장
+    private Properties userRoles = new Properties();
+
+    public AuthenticationManager() {
+        loadCredentials();
+    }
 
     public void loadCredentials() {
-        Properties properties = new Properties();
-        try (InputStream input = getClass().getClassLoader().getResourceAsStream("config/users.properties")) {
-            if (input == null) {
-                System.out.println("Sorry, unable to find users.properties");
+        Properties userProperties = new Properties();
+        Properties roleProperties = new Properties();
+
+        // 파일에서 유저명과 비밀번호 해시, 역할 정보를 읽어옴
+        try (InputStream userInput = new FileInputStream("resources/config/user.properties");
+             InputStream roleInput = new FileInputStream("resources/config/role.properties")) {
+
+            if (userInput == null || roleInput == null) {
+                System.out.println("Sorry, unable to find user.properties or role.properties");
                 return;
             }
-            properties.load(input);
 
-            // 파일에서 유저명과 비밀번호 해시를 읽어와 Map에 저장
-            for (String username : properties.stringPropertyNames()) {
-                String passwordHash = properties.getProperty(username);
+            // 유저명과 비밀번호 해시를 읽어 Map에 저장
+            userProperties.load(userInput);
+            for (String username : userProperties.stringPropertyNames()) {
+                String passwordHash = userProperties.getProperty(username);
                 userCredentials.put(username, passwordHash);
             }
+
+            // 유저명과 역할을 읽어 Properties에 저장
+            roleProperties.load(roleInput);
+            userRoles = roleProperties;
 
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
-    
+
+     // username 반환
+    public String getUsernameFromAuthHeader(String authHeader) {
+        String[] credentials = decodeBase64Credentials(authHeader);
+        if (credentials == null || credentials.length != 2) {
+            return null;
+        }
+
+        return credentials[0];
+    }
+
+    // password 인증
     public boolean authenticate(String authHeader) {
-        if (authHeader == null || !authHeader.startsWith("Basic ")) {
+        String[] credentials = decodeBase64Credentials(authHeader);
+        if (credentials == null || credentials.length != 2) {
             return false;
         }
     
-        // Base64로 인코딩된 자격 증명 디코딩
-        String encodedCredentials = authHeader.split(" ")[1];
-        String decoded = new String(Base64.getDecoder().decode(encodedCredentials));
-        String[] credentials = decoded.split(":");
-    
-        if (credentials.length != 2) {
-            return false;  // username과 password가 올바르게 제공되지 않은 경우
-        }
-    
-        // username과 password 추출
         String username = credentials[0];
         String password = credentials[1];
     
         return authenticate(username, password);
     }
+
+    // Base64 요청 디코딩
+    private String[] decodeBase64Credentials(String authHeader) {
+        if (authHeader == null || !authHeader.contains(" Basic ")) {
+            return null;
+        }
+        String encodedCredentials = authHeader.split(" ")[2];
+        String decoded = new String(Base64.getDecoder().decode(encodedCredentials));
+        return decoded.split(":");
+    }
     
+    
+    // 비밀번호가 일치 확인
     public boolean authenticate(String username, String password) {
-        // 사용자가 입력한 비밀번호의 해시값을 구함
-        String passwordHash = hashPassword(password);
+        String passwordHash = hashPassword(password); // 사용자 입력    
+        String storedPasswordHash = userCredentials.get(username);// userCredentials Map
     
-        // userCredentials Map에서 해당 유저의 해시된 비밀번호를 가져와 비교
-        String storedPasswordHash = userCredentials.get(username);
-    
-        // 비밀번호가 일치하는지 확인
         return storedPasswordHash != null && storedPasswordHash.equals(passwordHash);
     }
     
     
-    // Send Unauthorized response when authentication fails
+    // 인증 실패
     public void sendUnauthorizedResponse(Socket clientSocket) throws IOException {
         OutputStream outputStream = clientSocket.getOutputStream();
         PrintWriter writer = new PrintWriter(outputStream, true);
@@ -76,6 +101,24 @@ public class AuthenticationManager {
         writer.println("Content-Type: text/html");
         writer.println();
         writer.println("<html><body><h1>401 Unauthorized</h1></body></html>");
+        clientSocket.close();  // 연결 종료
+    }
+
+    //권한 없음
+    public void sendForbiddenResponse(Socket clientSocket) throws IOException {
+        OutputStream outputStream = clientSocket.getOutputStream();
+        PrintWriter writer = new PrintWriter(outputStream, true);
+        writer.println("HTTP/1.1 403 Forbidden");
+        writer.println("Content-Type: text/html");
+        writer.println();
+        writer.println("<html><body><h1>403 Forbidden</h1></body></html>");
+        clientSocket.close();  // 연결 종료
+    }
+
+    // 역할 확인
+    public boolean hasRole(String username, String role) {
+        String userRole = userRoles.getProperty(username);
+        return userRole != null && userRole.equals(role);
     }
 
     // 비밀번호를 해시화하는 메소드 (단순화된 예시, 실제 환경에서는 더 안전한 해시 알고리즘 사용)

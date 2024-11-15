@@ -6,7 +6,7 @@ import java.net.HttpURLConnection;
 import java.net.Socket;
 import java.net.URL;
 
-public class RequestHandler extends Thread {
+public class RequestHandler implements Runnable {
     private Socket clientSocket;
 
     public RequestHandler(Socket socket) {
